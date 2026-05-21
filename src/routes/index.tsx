@@ -186,6 +186,7 @@ function Index() {
               <button
                 type="button"
                 onClick={() => setTab("home")}
+                style={{ fontFamily: "Arial, sans-serif" }}
                 className="rounded-sm text-left text-lg font-bold text-slate-800 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 {title || DEFAULT_TITLE}
