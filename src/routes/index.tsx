@@ -11,6 +11,10 @@ import {
   Play,
   RotateCcw,
   Square,
+  Info,
+  Lock,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import confettiAnimation from "@/assets/confetti-full-screen.json";
 import defaultTreeImage from "@/assets/default-tree.png";
@@ -22,6 +26,66 @@ export const Route = createFileRoute("/")({
 
 type Pair = { id: string; label: string; answer: string };
 type TimerSettings = { minutes: number; seconds: number };
+type SpeechScoreTone = "great" | "pass" | "practice";
+type SpeechScoreResult = {
+  score: number;
+  feedback: string;
+  tone: SpeechScoreTone;
+};
+type SpeechRecognitionAlternativeLike = {
+  confidence?: number;
+  transcript: string;
+};
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  [index: number]: SpeechRecognitionAlternativeLike;
+};
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+};
+type SpeechRecognitionErrorEventLike = {
+  error?: string;
+};
+type SpeechRecognitionLike = {
+  abort: () => void;
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
+type SpeechRecognitionWindow = Window &
+  typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionConstructorLike;
+    webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+  };
+type WorkspaceConfig = {
+  id: "match-master" | "group-work";
+  label: string;
+  defaultTitle: string;
+  storageKey: string;
+  imageKey: string;
+  titleKey: string;
+  timerKey: string;
+  timerDefaultVersionKey: string;
+  defaultPairs: Pair[];
+  pairsDefaultVersionKey?: string;
+  pairsDefaultVersion?: string;
+  showDropTargets: boolean;
+  showAnswerTiles: boolean;
+  showGameReset: boolean;
+  showTargetSentence: boolean;
+  labelBoxesClickable: boolean;
+};
 
 const STORAGE_KEY = "tree-match-pairs-v1";
 const IMAGE_KEY = "tree-match-image-v1";
@@ -38,6 +102,79 @@ const CELEBRATION_BASE_SECONDS =
 const CELEBRATION_PLAYBACK_SPEED =
   CELEBRATION_BASE_SECONDS / (CELEBRATION_BASE_SECONDS + CELEBRATION_EXTRA_SECONDS);
 
+const DEFAULT_PAIRS: Pair[] = [
+  { id: "1", label: "flowers", answer: "pink" },
+  { id: "2", label: "leaves", answer: "green" },
+  { id: "3", label: "branches", answer: "long" },
+  { id: "4", label: "trunk", answer: "strong" },
+  { id: "5", label: "roots", answer: "deep" },
+];
+const GROUP_WORK_PAIRS_DEFAULT_VERSION = "3";
+const GROUP_WORK_DEFAULT_PAIRS: Pair[] = [
+  {
+    id: "1",
+    label: "Look at the tree.",
+    answer: "tree",
+  },
+  {
+    id: "2",
+    label: "The roots are deep.",
+    answer: "roots",
+  },
+  {
+    id: "3",
+    label: "The trunk is strong.",
+    answer: "trunk",
+  },
+  {
+    id: "4",
+    label: "The branches are green.",
+    answer: "branches",
+  },
+];
+const GROUP_WORK_LEGACY_SENTENCES = new Set([
+  "These green branches have some beautiful red apples.",
+  "The clever monkey jumps over the river branches.",
+  "We must brush our teeth every morning.",
+]);
+
+const WORKSPACES: WorkspaceConfig[] = [
+  {
+    id: "match-master",
+    label: "The Match Master",
+    defaultTitle: DEFAULT_TITLE,
+    storageKey: STORAGE_KEY,
+    imageKey: IMAGE_KEY,
+    titleKey: TITLE_KEY,
+    timerKey: TIMER_KEY,
+    timerDefaultVersionKey: TIMER_DEFAULT_VERSION_KEY,
+    defaultPairs: DEFAULT_PAIRS,
+    showDropTargets: true,
+    showAnswerTiles: true,
+    showGameReset: true,
+    showTargetSentence: false,
+    labelBoxesClickable: false,
+  },
+  {
+    id: "group-work",
+    label: "Group Work",
+    defaultTitle: "Group Work",
+    storageKey: "group-work-pairs-v1",
+    imageKey: "group-work-image-v1",
+    titleKey: "group-work-title-v1",
+    timerKey: "group-work-timer-v1",
+    timerDefaultVersionKey: "group-work-timer-default-version",
+    defaultPairs: GROUP_WORK_DEFAULT_PAIRS,
+    pairsDefaultVersionKey: "group-work-pairs-default-version",
+    pairsDefaultVersion: GROUP_WORK_PAIRS_DEFAULT_VERSION,
+    showDropTargets: false,
+    showAnswerTiles: false,
+    showGameReset: false,
+    showTargetSentence: true,
+    labelBoxesClickable: true,
+  },
+];
+
 type AudioContextWindow = Window &
   typeof globalThis & {
     webkitAudioContext?: typeof AudioContext;
@@ -51,89 +188,85 @@ function normalizeTimerSettings(value: unknown): TimerSettings {
   };
 }
 
-function useTitle() {
-  const [title, setTitle] = useState<string>(DEFAULT_TITLE);
-  const loaded = useRef(false);
+function useTitle(storageKey: string, defaultTitle: string) {
+  const [title, setTitle] = useState<string>(defaultTitle);
+  const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
+    setIsLoaded(false);
     try {
-      const raw = localStorage.getItem(TITLE_KEY);
-      if (raw) setTitle(raw);
+      const raw = localStorage.getItem(storageKey);
+      setTitle(raw || defaultTitle);
     } catch (error) {
       void error;
     }
-    loaded.current = true;
-  }, []);
+    setIsLoaded(true);
+  }, [defaultTitle, storageKey]);
   useEffect(() => {
-    if (loaded.current) {
-      try {
-        localStorage.setItem(TITLE_KEY, title);
-      } catch (error) {
-        void error;
-      }
+    if (!isLoaded) return;
+    try {
+      localStorage.setItem(storageKey, title);
+    } catch (error) {
+      void error;
     }
-  }, [title]);
+  }, [isLoaded, storageKey, title]);
   return [title, setTitle] as const;
 }
-const DEFAULT_PAIRS: Pair[] = [
-  { id: "1", label: "flowers", answer: "pink" },
-  { id: "2", label: "leaves", answer: "green" },
-  { id: "3", label: "branches", answer: "long" },
-  { id: "4", label: "trunk", answer: "strong" },
-  { id: "5", label: "roots", answer: "deep" },
-];
-
-function useImage() {
+function useImage(storageKey: string) {
   const [image, setImage] = useState<string | null>(DEFAULT_IMAGE);
-  const loaded = useRef(false);
+  const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
+    setIsLoaded(false);
     try {
-      const raw = localStorage.getItem(IMAGE_KEY);
+      const raw = localStorage.getItem(storageKey);
       setImage(raw || DEFAULT_IMAGE);
     } catch (error) {
       void error;
     }
-    loaded.current = true;
-  }, []);
+    setIsLoaded(true);
+  }, [storageKey]);
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!isLoaded) return;
     try {
-      if (image && image !== DEFAULT_IMAGE) localStorage.setItem(IMAGE_KEY, image);
-      else localStorage.removeItem(IMAGE_KEY);
+      if (image && image !== DEFAULT_IMAGE) localStorage.setItem(storageKey, image);
+      else localStorage.removeItem(storageKey);
     } catch (error) {
       void error;
     }
-  }, [image]);
+  }, [image, isLoaded, storageKey]);
   return [image, setImage] as const;
 }
 
-function useTimerSettings() {
+function useTimerSettings(storageKey: string, defaultVersionKey: string) {
   const [timerSettings, setTimerSettings] = useState<TimerSettings>(DEFAULT_TIMER);
-  const loaded = useRef(false);
+  const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
+    setIsLoaded(false);
     try {
-      const raw = localStorage.getItem(TIMER_KEY);
-      const defaultVersion = localStorage.getItem(TIMER_DEFAULT_VERSION_KEY);
+      const raw = localStorage.getItem(storageKey);
+      const defaultVersion = localStorage.getItem(defaultVersionKey);
       if (raw) {
         const saved = normalizeTimerSettings(JSON.parse(raw));
         const isOldDefault =
           defaultVersion !== TIMER_DEFAULT_VERSION && saved.minutes === 1 && saved.seconds === 0;
         setTimerSettings(isOldDefault ? DEFAULT_TIMER : saved);
+      } else {
+        setTimerSettings(DEFAULT_TIMER);
       }
-      localStorage.setItem(TIMER_DEFAULT_VERSION_KEY, TIMER_DEFAULT_VERSION);
+      localStorage.setItem(defaultVersionKey, TIMER_DEFAULT_VERSION);
     } catch (error) {
       void error;
     }
-    loaded.current = true;
-  }, []);
+    setIsLoaded(true);
+  }, [defaultVersionKey, storageKey]);
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!isLoaded) return;
     try {
-      localStorage.setItem(TIMER_KEY, JSON.stringify(timerSettings));
-      localStorage.setItem(TIMER_DEFAULT_VERSION_KEY, TIMER_DEFAULT_VERSION);
+      localStorage.setItem(storageKey, JSON.stringify(timerSettings));
+      localStorage.setItem(defaultVersionKey, TIMER_DEFAULT_VERSION);
     } catch (error) {
       void error;
     }
-  }, [timerSettings]);
+  }, [defaultVersionKey, isLoaded, storageKey, timerSettings]);
   return [timerSettings, setTimerSettings] as const;
 }
 
@@ -166,38 +299,88 @@ function playTone(ok: boolean) {
   }
 }
 
-function usePairs() {
-  const [pairs, setPairs] = useState<Pair[]>(DEFAULT_PAIRS);
-  const loaded = useRef(false);
+function usePairs(
+  storageKey: string,
+  defaultPairs: Pair[],
+  defaultVersionKey?: string,
+  defaultVersion?: string,
+) {
+  const [pairs, setPairs] = useState<Pair[]>(defaultPairs);
+  const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
+    setIsLoaded(false);
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setPairs(JSON.parse(raw));
+      const raw = localStorage.getItem(storageKey);
+      const savedVersion = defaultVersionKey ? localStorage.getItem(defaultVersionKey) : undefined;
+      const savedPairs = raw ? (JSON.parse(raw) as Pair[]) : undefined;
+      const hasLegacyPairs = savedPairs?.some((pair) =>
+        GROUP_WORK_LEGACY_SENTENCES.has(pair.label),
+      );
+      const shouldUseDefaultPairs =
+        Boolean(defaultVersionKey && defaultVersion) &&
+        (savedVersion !== defaultVersion || Boolean(hasLegacyPairs));
+      setPairs(shouldUseDefaultPairs ? defaultPairs : savedPairs || defaultPairs);
+      if (defaultVersionKey && defaultVersion) {
+        localStorage.setItem(defaultVersionKey, defaultVersion);
+      }
     } catch (error) {
       void error;
     }
-    loaded.current = true;
-  }, []);
+    setIsLoaded(true);
+  }, [defaultPairs, defaultVersion, defaultVersionKey, storageKey]);
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!isLoaded) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(pairs));
+      localStorage.setItem(storageKey, JSON.stringify(pairs));
     } catch (error) {
       void error;
     }
-  }, [pairs]);
+  }, [isLoaded, pairs, storageKey]);
   return [pairs, setPairs] as const;
 }
 
 function Index() {
   const [tab, setTab] = useState<"home" | "settings">("home");
-  const [pairs, setPairs] = usePairs();
-  const [image, setImage] = useImage();
-  const [title, setTitle] = useTitle();
-  const [timerSettings, setTimerSettings] = useTimerSettings();
+  const [workspaceId, setWorkspaceId] = useState<WorkspaceConfig["id"]>("match-master");
+  const workspace = WORKSPACES.find((item) => item.id === workspaceId) ?? WORKSPACES[0];
+
+  const selectWorkspace = (id: WorkspaceConfig["id"]) => {
+    setWorkspaceId(id);
+    setTab("home");
+  };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#fcf9f2" }}>
+    <div className="min-h-screen pb-24" style={{ backgroundColor: "#fcf9f2" }}>
+      <WorkspacePage key={workspace.id} workspace={workspace} tab={tab} setTab={setTab} />
+      <BottomNavigation activeWorkspaceId={workspace.id} onSelectWorkspace={selectWorkspace} />
+    </div>
+  );
+}
+
+function WorkspacePage({
+  workspace,
+  tab,
+  setTab,
+}: {
+  workspace: WorkspaceConfig;
+  tab: "home" | "settings";
+  setTab: React.Dispatch<React.SetStateAction<"home" | "settings">>;
+}) {
+  const [pairs, setPairs] = usePairs(
+    workspace.storageKey,
+    workspace.defaultPairs,
+    workspace.pairsDefaultVersionKey,
+    workspace.pairsDefaultVersion,
+  );
+  const [image, setImage] = useImage(workspace.imageKey);
+  const [title, setTitle] = useTitle(workspace.titleKey, workspace.defaultTitle);
+  const [timerSettings, setTimerSettings] = useTimerSettings(
+    workspace.timerKey,
+    workspace.timerDefaultVersionKey,
+  );
+
+  return (
+    <>
       <header className="border-b bg-white/70 backdrop-blur">
         <div className="max-w-5xl mx-auto px-6 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -208,7 +391,7 @@ function Index() {
                 style={{ fontFamily: "Arial, sans-serif" }}
                 className="rounded-sm text-left text-lg font-bold text-slate-800 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
-                {title || DEFAULT_TITLE}
+                {title || workspace.defaultTitle}
               </button>
             </h1>
           </div>
@@ -238,21 +421,65 @@ function Index() {
       </header>
       <main className="max-w-5xl mx-auto px-6 py-4">
         {tab === "home" ? (
-          <GameView pairs={pairs} image={image} timerSettings={timerSettings} />
+          <GameView
+            key={workspace.id}
+            pairs={pairs}
+            image={image}
+            timerSettings={timerSettings}
+            showDropTargets={workspace.showDropTargets}
+            showAnswerTiles={workspace.showAnswerTiles}
+            showGameReset={workspace.showGameReset}
+            showTargetSentence={workspace.showTargetSentence}
+            labelBoxesClickable={workspace.labelBoxesClickable}
+          />
         ) : (
           <SettingsView
+            key={workspace.id}
             pairs={pairs}
             setPairs={setPairs}
             image={image}
             setImage={setImage}
             title={title}
             setTitle={setTitle}
+            defaultTitle={workspace.defaultTitle}
             timerSettings={timerSettings}
             setTimerSettings={setTimerSettings}
           />
         )}
       </main>
-    </div>
+    </>
+  );
+}
+
+function BottomNavigation({
+  activeWorkspaceId,
+  onSelectWorkspace,
+}: {
+  activeWorkspaceId: WorkspaceConfig["id"];
+  onSelectWorkspace: (id: WorkspaceConfig["id"]) => void;
+}) {
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-5xl gap-2 px-6 py-3">
+        {WORKSPACES.map((workspace) => {
+          const active = workspace.id === activeWorkspaceId;
+          return (
+            <button
+              key={workspace.id}
+              type="button"
+              onClick={() => onSelectWorkspace(workspace.id)}
+              className={`flex-1 rounded-md px-4 py-3 text-sm font-semibold transition ${
+                active
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-950"
+              }`}
+            >
+              {workspace.label}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 
@@ -271,18 +498,105 @@ function shuffleAnswers(pairs: Pair[]) {
   return answers;
 }
 
+function normalizeSpeechText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getSpeechWords(value: string) {
+  const normalized = normalizeSpeechText(value);
+  return normalized ? normalized.split(" ") : [];
+}
+
+function wordEditDistance(source: string[], target: string[]) {
+  const previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+  const current = new Array<number>(target.length + 1);
+
+  for (let sourceIndex = 1; sourceIndex <= source.length; sourceIndex++) {
+    current[0] = sourceIndex;
+    for (let targetIndex = 1; targetIndex <= target.length; targetIndex++) {
+      const cost = source[sourceIndex - 1] === target[targetIndex - 1] ? 0 : 1;
+      current[targetIndex] = Math.min(
+        current[targetIndex - 1] + 1,
+        previous[targetIndex] + 1,
+        previous[targetIndex - 1] + cost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[target.length];
+}
+
+function scoreSpeech(targetSentence: string, transcript: string): SpeechScoreResult {
+  const targetWords = getSpeechWords(targetSentence);
+  const transcriptWords = getSpeechWords(transcript);
+  if (targetWords.length === 0 || transcriptWords.length === 0) {
+    return {
+      feedback: "没有识别到有效朗读，请再试一次。",
+      score: 0,
+      tone: "practice",
+    };
+  }
+
+  const distance = wordEditDistance(targetWords, transcriptWords);
+  const denominator = Math.max(targetWords.length, transcriptWords.length);
+  const score = Math.max(0, Math.min(100, Math.round((1 - distance / denominator) * 100)));
+
+  if (score >= 90) {
+    return {
+      feedback: "读得很完整，发音和目标句子非常接近。",
+      score,
+      tone: "great",
+    };
+  }
+  if (score >= 75) {
+    return {
+      feedback: "整体不错，再注意单词清晰度和完整度。",
+      score,
+      tone: "pass",
+    };
+  }
+  return {
+    feedback: "再试一次，放慢速度，把每个单词读完整。",
+    score,
+    tone: "practice",
+  };
+}
+
+function getSpeechRecognitionConstructor() {
+  const speechWindow = window as SpeechRecognitionWindow;
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+}
+
 function GameView({
   pairs,
   image,
   timerSettings,
+  showDropTargets,
+  showAnswerTiles,
+  showGameReset,
+  showTargetSentence,
+  labelBoxesClickable,
 }: {
   pairs: Pair[];
   image: string | null;
   timerSettings: TimerSettings;
+  showDropTargets: boolean;
+  showAnswerTiles: boolean;
+  showGameReset: boolean;
+  showTargetSentence: boolean;
+  labelBoxesClickable: boolean;
 }) {
   const [status, setStatus] = useState<Record<string, "correct" | "wrong" | undefined>>({});
   const [used, setUsed] = useState<Record<string, boolean>>({});
   const [placed, setPlaced] = useState<Record<string, string>>({});
+  const [selectedPairId, setSelectedPairId] = useState<string | null>(() =>
+    showTargetSentence ? (pairs[0]?.id ?? null) : null,
+  );
   const [draggingAnswer, setDraggingAnswer] = useState<string | null>(null);
   const [shuffled, setShuffled] = useState(() => pairs.map((p) => p.answer));
   const timerDurationSeconds = timerSettings.minutes * 60 + timerSettings.seconds;
@@ -293,7 +607,12 @@ function GameView({
 
   useEffect(() => {
     setShuffled(shuffleAnswers(pairs));
-  }, [pairs]);
+    setSelectedPairId((current) => {
+      const pairIds = new Set(pairs.map((pair) => pair.id));
+      if (current && pairIds.has(current)) return current;
+      return showTargetSentence ? (pairs[0]?.id ?? null) : null;
+    });
+  }, [pairs, showTargetSentence]);
 
   useEffect(() => {
     const clearDraggingAnswer = () => setDraggingAnswer(null);
@@ -330,6 +649,7 @@ function GameView({
     setStatus({});
     setUsed({});
     setPlaced({});
+    setSelectedPairId(showTargetSentence ? (pairs[0]?.id ?? null) : null);
     setDraggingAnswer(null);
   };
 
@@ -357,6 +677,13 @@ function GameView({
       }, 900);
     }
   };
+
+  const toggleLabelBox = (pairId: string) => {
+    if (!labelBoxesClickable) return;
+    setSelectedPairId(pairId);
+  };
+
+  const selectedSentence = pairs.find((pair) => pair.id === selectedPairId)?.label;
 
   if (pairs.length === 0) {
     return (
@@ -388,13 +715,21 @@ function GameView({
         />
       </div>
 
-      <div className="flex gap-8 items-stretch bg-white/60 rounded-2xl p-6 border">
-        <div className="flex items-stretch">
+      <div
+        className={`flex gap-8 bg-white/60 rounded-2xl p-6 border ${
+          showDropTargets ? "items-stretch" : "items-center"
+        }`}
+      >
+        <div className={showDropTargets ? "flex items-stretch" : "flex w-56 shrink-0 items-center"}>
           {image ? (
             <img
               src={image}
               alt="Reference"
-              className="h-full w-auto object-contain select-none pointer-events-none rounded-md"
+              className={`select-none pointer-events-none rounded-md ${
+                showDropTargets
+                  ? "h-full w-auto object-contain"
+                  : "max-h-[360px] w-full object-contain"
+              }`}
             />
           ) : (
             <div className="w-56 border-2 border-dashed border-slate-300 rounded-md flex items-center justify-center text-center text-xs text-slate-400 p-4">
@@ -404,42 +739,290 @@ function GameView({
         </div>
 
         <div className="flex-1 flex flex-col gap-3">
-          {pairs.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 flex-1">
-              <div className="w-[260px] md:w-[292px] h-full border-2 border-slate-700 rounded-md px-4 bg-white font-bold text-slate-800 flex items-center">
-                {p.label}
+          {pairs.map((p) => {
+            const labelSelected = selectedPairId === p.id;
+            const labelColorClass = labelSelected
+              ? "border-amber-500 bg-amber-100 shadow-sm"
+              : "border-slate-700 bg-white";
+            const labelBoxClassName = `border-2 rounded-md px-4 font-bold text-slate-800 flex items-center transition ${labelColorClass} ${
+              showDropTargets
+                ? "h-full w-[260px] md:w-[292px]"
+                : "min-h-16 w-full max-w-[560px] py-3 text-left leading-snug"
+            } ${
+              labelBoxesClickable
+                ? "cursor-pointer hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                : ""
+            }`;
+
+            return (
+              <div
+                key={p.id}
+                className={`flex items-center gap-3 ${showDropTargets ? "flex-1" : ""}`}
+              >
+                {labelBoxesClickable ? (
+                  <button
+                    type="button"
+                    aria-pressed={labelSelected}
+                    onClick={() => toggleLabelBox(p.id)}
+                    className={labelBoxClassName}
+                  >
+                    {p.label}
+                  </button>
+                ) : (
+                  <div className={labelBoxClassName}>{p.label}</div>
+                )}
+                {showDropTargets && (
+                  <>
+                    <div className="w-[54px] border-t-2 border-dashed border-slate-400" />
+                    <DropZone
+                      status={status[p.id]}
+                      value={placed[p.id]}
+                      activeAnswer={draggingAnswer}
+                      onDrop={(ans) => onDrop(p.id, ans)}
+                    />
+                  </>
+                )}
               </div>
-              <div className="w-[54px] border-t-2 border-dashed border-slate-400" />
-              <DropZone
-                status={status[p.id]}
-                value={placed[p.id]}
-                activeAnswer={draggingAnswer}
-                onDrop={(ans) => onDrop(p.id, ans)}
-              />
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 mt-8 justify-center">
-        {shuffled.map((ans, i) => (
-          <Draggable key={ans + i} value={ans} used={!!used[ans]} onPick={setDraggingAnswer} />
-        ))}
-      </div>
+      {showTargetSentence && selectedSentence && (
+        <>
+          <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-8 py-6 shadow-sm">
+            <p className="text-sm font-bold uppercase tracking-wide text-slate-400">
+              TARGET SENTENCE / 目标跟读句子
+            </p>
+            <p className="mt-3 text-3xl font-bold leading-tight text-slate-900">
+              {selectedSentence}
+            </p>
+          </section>
+          <SpeakingPracticePanel targetSentence={selectedSentence} />
+        </>
+      )}
+
+      {showAnswerTiles && (
+        <div className="flex flex-wrap gap-3 mt-8 justify-center">
+          {shuffled.map((ans, i) => (
+            <Draggable key={ans + i} value={ans} used={!!used[ans]} onPick={setDraggingAnswer} />
+          ))}
+        </div>
+      )}
 
       {allCorrect && (
         <p className="mt-6 text-center text-2xl font-bold text-green-600">🎉 Great job!</p>
       )}
 
-      <div className="mt-6 flex justify-center">
-        <button
-          onClick={reset}
-          className="px-8 py-3 rounded-lg bg-amber-500 text-white font-bold shadow hover:bg-amber-600 active:scale-95 transition"
-        >
-          Reset
-        </button>
-      </div>
+      {showGameReset && (
+        <div className="mt-6 flex justify-center">
+          <button
+            onClick={reset}
+            className="px-8 py-3 rounded-lg bg-amber-500 text-white font-bold shadow hover:bg-amber-600 active:scale-95 transition"
+          >
+            Reset
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [scoreResult, setScoreResult] = useState<SpeechScoreResult | null>(null);
+  const [transcript, setTranscript] = useState("");
+
+  useEffect(() => {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setErrorMessage("");
+    setIsListening(false);
+    setScoreResult(null);
+    setTranscript("");
+  }, [targetSentence]);
+
+  useEffect(() => {
+    return () => recognitionRef.current?.abort();
+  }, []);
+
+  const applyScore = (spokenText: string) => {
+    const cleanTranscript = spokenText.trim();
+    setTranscript(cleanTranscript);
+    setScoreResult(scoreSpeech(targetSentence, cleanTranscript));
+  };
+
+  const startRealScoring = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const Recognition = getSpeechRecognitionConstructor();
+    if (!Recognition) {
+      setErrorMessage("当前浏览器不支持语音识别。请使用 Chrome，或先用下方模拟按钮测试流程。");
+      setScoreResult(null);
+      setTranscript("");
+      return;
+    }
+
+    const recognition = new Recognition();
+    let latestTranscript = "";
+    let hadError = false;
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const parts: string[] = [];
+      for (let index = 0; index < event.results.length; index++) {
+        const transcriptPart = event.results[index][0]?.transcript;
+        if (transcriptPart) parts.push(transcriptPart);
+      }
+      latestTranscript = parts.join(" ").trim();
+      setTranscript(latestTranscript);
+    };
+    recognition.onerror = (event) => {
+      hadError = true;
+      setIsListening(false);
+      const isPermissionError =
+        event.error === "not-allowed" || event.error === "service-not-allowed";
+      setErrorMessage(
+        isPermissionError
+          ? "麦克风权限未开启。请允许浏览器使用麦克风后再试。"
+          : "语音识别失败，请确认麦克风可用后再试。",
+      );
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+      if (hadError) return;
+      if (!latestTranscript) {
+        setErrorMessage("没有识别到朗读内容，请靠近麦克风再试一次。");
+        setScoreResult(null);
+        return;
+      }
+      setErrorMessage("");
+      applyScore(latestTranscript);
+    };
+
+    setErrorMessage("");
+    setScoreResult(null);
+    setTranscript("");
+    setIsListening(true);
+    try {
+      recognition.start();
+    } catch (error) {
+      void error;
+      setIsListening(false);
+      setErrorMessage("语音识别无法启动，请稍后再试。");
+    }
+  };
+
+  const simulateScore = (score: number) => {
+    const tone: SpeechScoreTone = score >= 90 ? "great" : score >= 75 ? "pass" : "practice";
+    const feedback =
+      tone === "great"
+        ? "模拟结果：读得很完整，发音和目标句子非常接近。"
+        : tone === "pass"
+          ? "模拟结果：整体不错，再注意单词清晰度和完整度。"
+          : "模拟结果：再试一次，放慢速度，把每个单词读完整。";
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setErrorMessage("");
+    setIsListening(false);
+    setTranscript(targetSentence);
+    setScoreResult({ feedback, score, tone });
+  };
+
+  const resultColorClass =
+    scoreResult?.tone === "great"
+      ? "border-green-200 bg-green-50 text-green-700"
+      : scoreResult?.tone === "pass"
+        ? "border-yellow-200 bg-yellow-50 text-yellow-700"
+        : "border-red-200 bg-red-50 text-red-700";
+
+  return (
+    <section className="mt-6">
+      <div className="rounded-2xl border-2 border-indigo-100 bg-white px-8 py-8 text-center shadow-md">
+        <p className="flex items-center justify-center gap-3 text-lg font-bold text-slate-400">
+          <MicOff size={24} />
+          {isListening ? "正在听你朗读，读完后会自动打分。" : "准备好了吗？点击下方大按钮开始！"}
+        </p>
+        <button
+          type="button"
+          onClick={startRealScoring}
+          className={`mx-auto mt-8 inline-flex min-h-20 items-center justify-center gap-5 rounded-2xl px-12 text-2xl font-bold text-white shadow-xl transition hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-300 ${
+            isListening
+              ? "bg-gradient-to-r from-red-500 to-pink-500"
+              : "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"
+          }`}
+        >
+          <Mic size={34} />
+          {isListening ? "正在听...点击结束" : "我来读一读 → 智能打分"}
+        </button>
+        {(transcript || scoreResult || errorMessage) && (
+          <div className="mx-auto mt-6 max-w-3xl space-y-3 text-left">
+            {transcript && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">识别结果</p>
+                <p className="mt-1 text-base font-semibold text-slate-800">{transcript}</p>
+              </div>
+            )}
+            {scoreResult && (
+              <div className={`rounded-xl border px-4 py-3 ${resultColorClass}`}>
+                <p className="text-2xl font-bold">{scoreResult.score} 分</p>
+                <p className="mt-1 text-sm font-semibold">{scoreResult.feedback}</p>
+              </div>
+            )}
+            {errorMessage && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+                {errorMessage}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="mt-7 flex flex-wrap items-center justify-center gap-4 text-lg font-bold">
+          <span className="inline-flex items-center gap-2 text-slate-400">
+            <Info size={20} />
+            本地测试/没麦克风？可一键模拟：
+          </span>
+          <button
+            type="button"
+            onClick={() => simulateScore(96)}
+            className="rounded-lg border border-green-200 bg-green-50 px-5 py-2 text-green-700 transition hover:bg-green-100"
+          >
+            🌟 模拟完美 (95分+)
+          </button>
+          <button
+            type="button"
+            onClick={() => simulateScore(82)}
+            className="rounded-lg border border-yellow-200 bg-yellow-50 px-5 py-2 text-yellow-700 transition hover:bg-yellow-100"
+          >
+            👍 模拟及格 (80分左右)
+          </button>
+          <button
+            type="button"
+            onClick={() => simulateScore(58)}
+            className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-red-600 transition hover:bg-red-100"
+          >
+            😅 模拟一般 (60分以下)
+          </button>
+        </div>
+      </div>
+      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-8 py-5 text-center">
+        <p className="inline-flex items-center gap-2 text-lg font-bold text-slate-500">
+          <Lock size={20} />
+          智能提示：基础语音打分基于浏览器语音识别和文本相似度计算。
+        </p>
+        <p className="mt-3 text-sm font-bold text-rose-500">
+          ⚠️ AI生成内容（已人工审核）——基础语音打分仅供参考，教师仍需人工指导发音
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -613,6 +1196,7 @@ function SettingsView({
   setImage,
   title,
   setTitle,
+  defaultTitle,
   timerSettings,
   setTimerSettings,
 }: {
@@ -622,6 +1206,7 @@ function SettingsView({
   setImage: React.Dispatch<React.SetStateAction<string | null>>;
   title: string;
   setTitle: React.Dispatch<React.SetStateAction<string>>;
+  defaultTitle: string;
   timerSettings: TimerSettings;
   setTimerSettings: React.Dispatch<React.SetStateAction<TimerSettings>>;
 }) {
@@ -652,7 +1237,7 @@ function SettingsView({
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={DEFAULT_TITLE}
+          placeholder={defaultTitle}
           className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
         />
       </div>
