@@ -31,6 +31,11 @@ type SpeechScoreResult = {
   feedback: string;
   tone: SpeechScoreTone;
 };
+type TranscriptWordTone = "correct" | "wrong" | "neutral";
+type TranscriptWordToken = {
+  text: string;
+  tone: TranscriptWordTone;
+};
 type SpeechRecognitionAlternativeLike = {
   confidence?: number;
   transcript: string;
@@ -553,6 +558,75 @@ function getSpeechWords(value: string) {
   return normalized ? normalized.split(" ") : [];
 }
 
+function getTranscriptWordTokens(
+  targetSentence: string,
+  transcript: string,
+): TranscriptWordToken[] {
+  const targetWords = getSpeechWords(targetSentence);
+  const transcriptTokens = transcript
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((text) => ({
+      normalized: normalizeSpeechText(text),
+      text,
+    }));
+
+  if (transcriptTokens.length === 0) return [];
+  if (targetWords.length === 0) {
+    return transcriptTokens.map((token) => ({ text: token.text, tone: "neutral" }));
+  }
+
+  const rowCount = targetWords.length + 1;
+  const columnCount = transcriptTokens.length + 1;
+  const distance = Array.from({ length: rowCount }, () => Array<number>(columnCount).fill(0));
+
+  for (let row = 0; row < rowCount; row++) distance[row][0] = row;
+  for (let column = 0; column < columnCount; column++) distance[0][column] = column;
+
+  for (let row = 1; row < rowCount; row++) {
+    for (let column = 1; column < columnCount; column++) {
+      const cost = targetWords[row - 1] === transcriptTokens[column - 1].normalized ? 0 : 1;
+      distance[row][column] = Math.min(
+        distance[row - 1][column] + 1,
+        distance[row][column - 1] + 1,
+        distance[row - 1][column - 1] + cost,
+      );
+    }
+  }
+
+  const tones: TranscriptWordTone[] = transcriptTokens.map((token) =>
+    token.normalized ? "wrong" : "neutral",
+  );
+  let row = targetWords.length;
+  let column = transcriptTokens.length;
+
+  while (row > 0 || column > 0) {
+    if (row > 0 && column > 0) {
+      const isMatch = targetWords[row - 1] === transcriptTokens[column - 1].normalized;
+      const substitutionCost = isMatch ? 0 : 1;
+      if (distance[row][column] === distance[row - 1][column - 1] + substitutionCost) {
+        tones[column - 1] = transcriptTokens[column - 1].normalized
+          ? isMatch
+            ? "correct"
+            : "wrong"
+          : "neutral";
+        row--;
+        column--;
+        continue;
+      }
+    }
+    if (column > 0 && distance[row][column] === distance[row][column - 1] + 1) {
+      tones[column - 1] = transcriptTokens[column - 1].normalized ? "wrong" : "neutral";
+      column--;
+      continue;
+    }
+    row--;
+  }
+
+  return transcriptTokens.map((token, index) => ({ text: token.text, tone: tones[index] }));
+}
+
 function wordEditDistance(source: string[], target: string[]) {
   const previous = Array.from({ length: target.length + 1 }, (_, index) => index);
   const current = new Array<number>(target.length + 1);
@@ -904,7 +978,7 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
 
     const Recognition = getSpeechRecognitionConstructor();
     if (!Recognition) {
-      setErrorMessage("当前浏览器不支持语音识别。请使用 Chrome，或先用下方模拟按钮测试流程。");
+      setErrorMessage("当前浏览器不支持语音识别。请使用 Chrome 后再试。");
       setScoreResult(null);
       setTranscript("");
       return;
@@ -964,28 +1038,21 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
     }
   };
 
-  const simulateScore = (score: number) => {
-    const tone: SpeechScoreTone = score >= 90 ? "great" : score >= 75 ? "pass" : "practice";
-    const feedback =
-      tone === "great"
-        ? "模拟结果：读得很完整，发音和目标句子非常接近。"
-        : tone === "pass"
-          ? "模拟结果：整体不错，再注意单词清晰度和完整度。"
-          : "模拟结果：再试一次，放慢速度，把每个单词读完整。";
-    recognitionRef.current?.abort();
-    recognitionRef.current = null;
-    setErrorMessage("");
-    setIsListening(false);
-    setTranscript(targetSentence);
-    setScoreResult({ feedback, score, tone });
-  };
-
   const resultColorClass =
     scoreResult?.tone === "great"
       ? "border-green-200 bg-green-50 text-green-700"
       : scoreResult?.tone === "pass"
         ? "border-yellow-200 bg-yellow-50 text-yellow-700"
         : "border-red-200 bg-red-50 text-red-700";
+  const resultLabel =
+    scoreResult?.tone === "great"
+      ? "Excellent!"
+      : scoreResult?.tone === "pass"
+        ? "Good!"
+        : scoreResult
+          ? "Try again."
+          : "";
+  const transcriptWordTokens = getTranscriptWordTokens(targetSentence, transcript);
 
   return (
     <section className="mt-6">
@@ -1011,7 +1078,22 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
             {transcript && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-400">识别结果</p>
-                <p className="mt-1 text-base font-semibold text-slate-800">{transcript}</p>
+                <p className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-base font-semibold">
+                  {transcriptWordTokens.map((token, index) => (
+                    <span
+                      key={`${token.text}-${index}`}
+                      className={
+                        token.tone === "correct"
+                          ? "rounded bg-green-50 px-1.5 py-0.5 text-green-700"
+                          : token.tone === "wrong"
+                            ? "rounded bg-red-50 px-1.5 py-0.5 text-red-600"
+                            : "rounded bg-slate-100 px-1.5 py-0.5 text-slate-600"
+                      }
+                    >
+                      {token.text}
+                    </span>
+                  ))}
+                </p>
               </div>
             )}
             {scoreResult && (
@@ -1027,29 +1109,13 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
             )}
           </div>
         )}
-        <div className="mt-7 flex flex-wrap items-center justify-center gap-4 text-lg font-bold">
-          <button
-            type="button"
-            onClick={() => simulateScore(96)}
-            className="rounded-lg border border-green-200 bg-green-50 px-5 py-2 text-green-700 transition hover:bg-green-100"
-          >
-            Excellent!
-          </button>
-          <button
-            type="button"
-            onClick={() => simulateScore(82)}
-            className="rounded-lg border border-yellow-200 bg-yellow-50 px-5 py-2 text-yellow-700 transition hover:bg-yellow-100"
-          >
-            Good!
-          </button>
-          <button
-            type="button"
-            onClick={() => simulateScore(58)}
-            className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-red-600 transition hover:bg-red-100"
-          >
-            Try again.
-          </button>
-        </div>
+        {scoreResult && (
+          <div className="mt-7 flex justify-center">
+            <div className={`rounded-lg border px-6 py-3 text-lg font-bold ${resultColorClass}`}>
+              {resultLabel}
+            </div>
+          </div>
+        )}
       </div>
       <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-8 py-5 text-center">
         <p className="inline-flex items-center gap-2 text-lg font-bold text-slate-500">
