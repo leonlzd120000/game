@@ -11,7 +11,6 @@ import {
   Play,
   RotateCcw,
   Square,
-  Info,
   Lock,
   Mic,
   MicOff,
@@ -77,7 +76,11 @@ type WorkspaceConfig = {
   titleKey: string;
   timerKey: string;
   timerDefaultVersionKey: string;
+  timerDefaultVersion: string;
+  timerDefault: TimerSettings;
+  legacyTimerDefaults: TimerSettings[];
   defaultPairs: Pair[];
+  legacyTitleMap?: Record<string, string>;
   pairsDefaultVersionKey?: string;
   pairsDefaultVersion?: string;
   showDropTargets: boolean;
@@ -92,10 +95,14 @@ const IMAGE_KEY = "tree-match-image-v1";
 const TITLE_KEY = "tree-match-title-v1";
 const TIMER_KEY = "tree-match-timer-v1";
 const TIMER_DEFAULT_VERSION_KEY = "tree-match-timer-default-version";
-const TIMER_DEFAULT_VERSION = "2";
-const DEFAULT_TITLE = "Tree Match Master";
-const DEFAULT_TIMER: TimerSettings = { minutes: 2, seconds: 0 };
+const MATCH_TIMER_DEFAULT_VERSION = "2";
+const SPEAK_TIMER_DEFAULT_VERSION = "3";
+const DEFAULT_TITLE = "Match";
+const MATCH_TIMER_DEFAULT: TimerSettings = { minutes: 2, seconds: 0 };
+const SPEAK_TIMER_DEFAULT: TimerSettings = { minutes: 4, seconds: 0 };
+const LEGACY_ONE_MINUTE_TIMER: TimerSettings = { minutes: 1, seconds: 0 };
 const DEFAULT_IMAGE = defaultTreeImage;
+const EMPTY_TITLE_MAP: Record<string, string> = {};
 const CELEBRATION_EXTRA_SECONDS = 0.5;
 const CELEBRATION_BASE_SECONDS =
   (confettiAnimation.op - confettiAnimation.ip) / confettiAnimation.fr;
@@ -141,14 +148,18 @@ const GROUP_WORK_LEGACY_SENTENCES = new Set([
 const WORKSPACES: WorkspaceConfig[] = [
   {
     id: "match-master",
-    label: "The Match Master",
+    label: "Match",
     defaultTitle: DEFAULT_TITLE,
     storageKey: STORAGE_KEY,
     imageKey: IMAGE_KEY,
     titleKey: TITLE_KEY,
     timerKey: TIMER_KEY,
     timerDefaultVersionKey: TIMER_DEFAULT_VERSION_KEY,
+    timerDefaultVersion: MATCH_TIMER_DEFAULT_VERSION,
+    timerDefault: MATCH_TIMER_DEFAULT,
+    legacyTimerDefaults: [LEGACY_ONE_MINUTE_TIMER],
     defaultPairs: DEFAULT_PAIRS,
+    legacyTitleMap: { "Tree Match Master": "Match" },
     showDropTargets: true,
     showAnswerTiles: true,
     showGameReset: true,
@@ -157,14 +168,18 @@ const WORKSPACES: WorkspaceConfig[] = [
   },
   {
     id: "group-work",
-    label: "Group Work",
-    defaultTitle: "Group Work",
+    label: "Speak",
+    defaultTitle: "Speak",
     storageKey: "group-work-pairs-v1",
     imageKey: "group-work-image-v1",
     titleKey: "group-work-title-v1",
     timerKey: "group-work-timer-v1",
     timerDefaultVersionKey: "group-work-timer-default-version",
+    timerDefaultVersion: SPEAK_TIMER_DEFAULT_VERSION,
+    timerDefault: SPEAK_TIMER_DEFAULT,
+    legacyTimerDefaults: [LEGACY_ONE_MINUTE_TIMER, MATCH_TIMER_DEFAULT],
     defaultPairs: GROUP_WORK_DEFAULT_PAIRS,
+    legacyTitleMap: { "Group Work": "Speak" },
     pairsDefaultVersionKey: "group-work-pairs-default-version",
     pairsDefaultVersion: GROUP_WORK_PAIRS_DEFAULT_VERSION,
     showDropTargets: false,
@@ -188,19 +203,27 @@ function normalizeTimerSettings(value: unknown): TimerSettings {
   };
 }
 
-function useTitle(storageKey: string, defaultTitle: string) {
+function useTitle(
+  storageKey: string,
+  defaultTitle: string,
+  legacyTitleMap: Record<string, string> = EMPTY_TITLE_MAP,
+) {
   const [title, setTitle] = useState<string>(defaultTitle);
   const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
     setIsLoaded(false);
     try {
       const raw = localStorage.getItem(storageKey);
-      setTitle(raw || defaultTitle);
+      const migratedTitle = raw ? (legacyTitleMap[raw] ?? raw) : defaultTitle;
+      setTitle(migratedTitle);
+      if (raw && migratedTitle !== raw) {
+        localStorage.setItem(storageKey, migratedTitle);
+      }
     } catch (error) {
       void error;
     }
     setIsLoaded(true);
-  }, [defaultTitle, storageKey]);
+  }, [defaultTitle, legacyTitleMap, storageKey]);
   useEffect(() => {
     if (!isLoaded) return;
     try {
@@ -236,37 +259,48 @@ function useImage(storageKey: string) {
   return [image, setImage] as const;
 }
 
-function useTimerSettings(storageKey: string, defaultVersionKey: string) {
-  const [timerSettings, setTimerSettings] = useState<TimerSettings>(DEFAULT_TIMER);
+function isSameTimer(a: TimerSettings, b: TimerSettings) {
+  return a.minutes === b.minutes && a.seconds === b.seconds;
+}
+
+function useTimerSettings(
+  storageKey: string,
+  defaultVersionKey: string,
+  defaultVersion: string,
+  defaultTimer: TimerSettings,
+  legacyDefaults: TimerSettings[],
+) {
+  const [timerSettings, setTimerSettings] = useState<TimerSettings>(defaultTimer);
   const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
     setIsLoaded(false);
     try {
       const raw = localStorage.getItem(storageKey);
-      const defaultVersion = localStorage.getItem(defaultVersionKey);
+      const savedDefaultVersion = localStorage.getItem(defaultVersionKey);
       if (raw) {
         const saved = normalizeTimerSettings(JSON.parse(raw));
         const isOldDefault =
-          defaultVersion !== TIMER_DEFAULT_VERSION && saved.minutes === 1 && saved.seconds === 0;
-        setTimerSettings(isOldDefault ? DEFAULT_TIMER : saved);
+          savedDefaultVersion !== defaultVersion &&
+          legacyDefaults.some((legacyTimer) => isSameTimer(saved, legacyTimer));
+        setTimerSettings(isOldDefault ? defaultTimer : saved);
       } else {
-        setTimerSettings(DEFAULT_TIMER);
+        setTimerSettings(defaultTimer);
       }
-      localStorage.setItem(defaultVersionKey, TIMER_DEFAULT_VERSION);
+      localStorage.setItem(defaultVersionKey, defaultVersion);
     } catch (error) {
       void error;
     }
     setIsLoaded(true);
-  }, [defaultVersionKey, storageKey]);
+  }, [defaultTimer, defaultVersion, defaultVersionKey, legacyDefaults, storageKey]);
   useEffect(() => {
     if (!isLoaded) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(timerSettings));
-      localStorage.setItem(defaultVersionKey, TIMER_DEFAULT_VERSION);
+      localStorage.setItem(defaultVersionKey, defaultVersion);
     } catch (error) {
       void error;
     }
-  }, [defaultVersionKey, isLoaded, storageKey, timerSettings]);
+  }, [defaultVersion, defaultVersionKey, isLoaded, storageKey, timerSettings]);
   return [timerSettings, setTimerSettings] as const;
 }
 
@@ -373,10 +407,17 @@ function WorkspacePage({
     workspace.pairsDefaultVersion,
   );
   const [image, setImage] = useImage(workspace.imageKey);
-  const [title, setTitle] = useTitle(workspace.titleKey, workspace.defaultTitle);
+  const [title, setTitle] = useTitle(
+    workspace.titleKey,
+    workspace.defaultTitle,
+    workspace.legacyTitleMap,
+  );
   const [timerSettings, setTimerSettings] = useTimerSettings(
     workspace.timerKey,
     workspace.timerDefaultVersionKey,
+    workspace.timerDefaultVersion,
+    workspace.timerDefault,
+    workspace.legacyTimerDefaults,
   );
 
   return (
@@ -444,6 +485,7 @@ function WorkspacePage({
             defaultTitle={workspace.defaultTitle}
             timerSettings={timerSettings}
             setTimerSettings={setTimerSettings}
+            showAnswerFields={workspace.showAnswerTiles}
           />
         )}
       </main>
@@ -950,7 +992,7 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
       <div className="rounded-2xl border-2 border-indigo-100 bg-white px-8 py-8 text-center shadow-md">
         <p className="flex items-center justify-center gap-3 text-lg font-bold text-slate-400">
           <MicOff size={24} />
-          {isListening ? "正在听你朗读，读完后会自动打分。" : "准备好了吗？点击下方大按钮开始！"}
+          {isListening ? "正在听你朗读，读完后会自动打分。" : "Press to start"}
         </p>
         <button
           type="button"
@@ -962,7 +1004,7 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
           }`}
         >
           <Mic size={34} />
-          {isListening ? "正在听...点击结束" : "我来读一读 → 智能打分"}
+          {isListening ? "正在听...点击结束" : "I can read"}
         </button>
         {(transcript || scoreResult || errorMessage) && (
           <div className="mx-auto mt-6 max-w-3xl space-y-3 text-left">
@@ -986,30 +1028,26 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
           </div>
         )}
         <div className="mt-7 flex flex-wrap items-center justify-center gap-4 text-lg font-bold">
-          <span className="inline-flex items-center gap-2 text-slate-400">
-            <Info size={20} />
-            本地测试/没麦克风？可一键模拟：
-          </span>
           <button
             type="button"
             onClick={() => simulateScore(96)}
             className="rounded-lg border border-green-200 bg-green-50 px-5 py-2 text-green-700 transition hover:bg-green-100"
           >
-            🌟 模拟完美 (95分+)
+            Excellent!
           </button>
           <button
             type="button"
             onClick={() => simulateScore(82)}
             className="rounded-lg border border-yellow-200 bg-yellow-50 px-5 py-2 text-yellow-700 transition hover:bg-yellow-100"
           >
-            👍 模拟及格 (80分左右)
+            Good!
           </button>
           <button
             type="button"
             onClick={() => simulateScore(58)}
             className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-red-600 transition hover:bg-red-100"
           >
-            😅 模拟一般 (60分以下)
+            Try again.
           </button>
         </div>
       </div>
@@ -1199,6 +1237,7 @@ function SettingsView({
   defaultTitle,
   timerSettings,
   setTimerSettings,
+  showAnswerFields,
 }: {
   pairs: Pair[];
   setPairs: React.Dispatch<React.SetStateAction<Pair[]>>;
@@ -1209,6 +1248,7 @@ function SettingsView({
   defaultTitle: string;
   timerSettings: TimerSettings;
   setTimerSettings: React.Dispatch<React.SetStateAction<TimerSettings>>;
+  showAnswerFields: boolean;
 }) {
   const update = (id: string, field: "label" | "answer", value: string) => {
     setPairs((ps) => ps.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
@@ -1305,31 +1345,45 @@ function SettingsView({
       </div>
 
       <div className="bg-white rounded-xl border p-6">
-        <h2 className="text-lg font-semibold text-slate-800 mb-1">Match pairs</h2>
+        <h2 className="text-lg font-semibold text-slate-800 mb-1">
+          {showAnswerFields ? "Match pairs" : "Sentences"}
+        </h2>
         <p className="text-sm text-slate-500 mb-6">
-          The label appears in the solid box on the left. The answer is the correct yellow tile to
-          drag into its dashed box.
+          {showAnswerFields
+            ? "The label appears in the solid box on the left. The answer is the correct yellow tile to drag into its dashed box."
+            : "Edit the sentence buttons shown on the Speak page."}
         </p>
-        <div className="grid grid-cols-[1fr_1fr_auto] gap-3 text-xs font-medium text-slate-500 uppercase mb-2 px-1">
-          <div>Label (solid box)</div>
-          <div>Answer (dashed box)</div>
+        <div
+          className={`grid gap-3 text-xs font-medium text-slate-500 uppercase mb-2 px-1 ${
+            showAnswerFields ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"
+          }`}
+        >
+          <div>{showAnswerFields ? "Label (solid box)" : "Sentence"}</div>
+          {showAnswerFields && <div>Answer (dashed box)</div>}
           <div></div>
         </div>
         <div className="space-y-2">
           {pairs.map((p) => (
-            <div key={p.id} className="grid grid-cols-[1fr_1fr_auto] gap-3">
+            <div
+              key={p.id}
+              className={`grid gap-3 ${
+                showAnswerFields ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"
+              }`}
+            >
               <input
                 value={p.label}
                 onChange={(e) => update(p.id, "label", e.target.value)}
-                placeholder="flowers"
+                placeholder={showAnswerFields ? "flowers" : "Look at the tree."}
                 className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
               />
-              <input
-                value={p.answer}
-                onChange={(e) => update(p.id, "answer", e.target.value)}
-                placeholder="pink"
-                className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
-              />
+              {showAnswerFields && (
+                <input
+                  value={p.answer}
+                  onChange={(e) => update(p.id, "answer", e.target.value)}
+                  placeholder="pink"
+                  className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                />
+              )}
               <button
                 onClick={() => remove(p.id)}
                 className="px-3 rounded-md text-slate-500 hover:bg-red-50 hover:text-red-600"
@@ -1344,7 +1398,7 @@ function SettingsView({
           onClick={add}
           className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-white text-sm rounded-md hover:bg-slate-700"
         >
-          <Plus size={16} /> Add pair
+          <Plus size={16} /> {showAnswerFields ? "Add pair" : "Add sentence"}
         </button>
       </div>
     </div>
