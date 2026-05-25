@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import lottie from "lottie-web/build/player/lottie_light";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   X,
@@ -42,6 +42,14 @@ type GroupStarScore = {
   id: string;
   label: string;
   stars: number;
+};
+type PointerDragPreview = {
+  answer: string;
+  x: number;
+  y: number;
+};
+type PointerAnswerDrag = PointerDragPreview & {
+  pointerId: number;
 };
 type SpeechRecognitionAlternativeLike = {
   confidence?: number;
@@ -607,6 +615,12 @@ function formatTime(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function getDropZonePairIdAtPoint(x: number, y: number) {
+  const element = document.elementFromPoint(x, y);
+  const dropZone = element?.closest<HTMLElement>("[data-drop-zone-pair-id]");
+  return dropZone?.dataset.dropZonePairId ?? null;
+}
+
 function shuffleAnswers(pairs: Pair[]) {
   const answers = pairs.map((p) => p.answer);
   for (let i = answers.length - 1; i > 0; i--) {
@@ -846,6 +860,9 @@ function GameView({
     showTargetSentence ? (pairs[0]?.id ?? null) : null,
   );
   const [draggingAnswer, setDraggingAnswer] = useState<string | null>(null);
+  const [pointerDragPreview, setPointerDragPreview] = useState<PointerDragPreview | null>(null);
+  const [activeDropZoneId, setActiveDropZoneId] = useState<string | null>(null);
+  const pointerDragRef = useRef<PointerAnswerDrag | null>(null);
   const [shuffled, setShuffled] = useState(() => pairs.map((p) => p.answer));
   const [groupStars, setGroupStars] = useGroupStars(GROUP_STARS_KEY, showGroupStars);
   const timerDurationSeconds = timerSettings.minutes * 60 + timerSettings.seconds;
@@ -862,12 +879,6 @@ function GameView({
       return showTargetSentence ? (pairs[0]?.id ?? null) : null;
     });
   }, [pairs, showTargetSentence]);
-
-  useEffect(() => {
-    const clearDraggingAnswer = () => setDraggingAnswer(null);
-    window.addEventListener("pointerup", clearDraggingAnswer);
-    return () => window.removeEventListener("pointerup", clearDraggingAnswer);
-  }, []);
 
   useEffect(() => {
     if (!allCorrect) return;
@@ -894,12 +905,19 @@ function GameView({
     }
   }, [remainingSeconds, timerRunning]);
 
+  const clearAnswerDrag = useCallback(() => {
+    pointerDragRef.current = null;
+    setDraggingAnswer(null);
+    setPointerDragPreview(null);
+    setActiveDropZoneId(null);
+  }, []);
+
   const reset = () => {
     setStatus({});
     setUsed({});
     setPlaced({});
     setSelectedPairId(showTargetSentence ? (pairs[0]?.id ?? null) : null);
-    setDraggingAnswer(null);
+    clearAnswerDrag();
   };
 
   const resetTimer = () => {
@@ -907,24 +925,88 @@ function GameView({
     setRemainingSeconds(timerDurationSeconds);
   };
 
-  const onDrop = (pairId: string, answer: string) => {
-    const pair = pairs.find((p) => p.id === pairId);
-    if (!pair || status[pairId] === "correct") return;
-    const ok = pair.answer.trim().toLowerCase() === answer.trim().toLowerCase();
-    setPlaced((current) => ({ ...current, [pairId]: answer }));
-    setStatus((s) => ({ ...s, [pairId]: ok ? "correct" : "wrong" }));
-    if (ok) setUsed((u) => ({ ...u, [answer]: true }));
-    playTone(ok);
-    if (!ok) {
-      setTimeout(() => {
-        setStatus((s) => ({ ...s, [pairId]: undefined }));
-        setPlaced((current) => {
-          const next = { ...current };
-          delete next[pairId];
-          return next;
-        });
-      }, 900);
+  const onDrop = useCallback(
+    (pairId: string, answer: string) => {
+      const pair = pairs.find((p) => p.id === pairId);
+      if (!pair || status[pairId] === "correct") return;
+      const ok = pair.answer.trim().toLowerCase() === answer.trim().toLowerCase();
+      setPlaced((current) => ({ ...current, [pairId]: answer }));
+      setStatus((s) => ({ ...s, [pairId]: ok ? "correct" : "wrong" }));
+      if (ok) setUsed((u) => ({ ...u, [answer]: true }));
+      playTone(ok);
+      if (!ok) {
+        setTimeout(() => {
+          setStatus((s) => ({ ...s, [pairId]: undefined }));
+          setPlaced((current) => {
+            const next = { ...current };
+            delete next[pairId];
+            return next;
+          });
+        }, 900);
+      }
+    },
+    [pairs, status],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const pointerDrag = pointerDragRef.current;
+      if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+      const nextPreview = {
+        answer: pointerDrag.answer,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      pointerDragRef.current = { ...nextPreview, pointerId: event.pointerId };
+      setPointerDragPreview(nextPreview);
+      setActiveDropZoneId(getDropZonePairIdAtPoint(event.clientX, event.clientY));
+      event.preventDefault();
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const pointerDrag = pointerDragRef.current;
+      if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+      const pairId = getDropZonePairIdAtPoint(event.clientX, event.clientY);
+      if (pairId) onDrop(pairId, pointerDrag.answer);
+      clearAnswerDrag();
+      event.preventDefault();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", clearAnswerDrag);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", clearAnswerDrag);
+    };
+  }, [clearAnswerDrag, onDrop]);
+
+  const startPointerAnswerDrag = (answer: string, event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const pointerDrag = {
+      answer,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+    };
+    pointerDragRef.current = pointerDrag;
+    setDraggingAnswer(answer);
+    setPointerDragPreview(pointerDrag);
+    setActiveDropZoneId(null);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch (error) {
+      void error;
     }
+    event.preventDefault();
+  };
+
+  const handleNativeAnswerDragChange = (answer: string | null) => {
+    pointerDragRef.current = null;
+    setPointerDragPreview(null);
+    setActiveDropZoneId(null);
+    setDraggingAnswer(answer);
   };
 
   const toggleLabelBox = (pairId: string) => {
@@ -1042,9 +1124,10 @@ function GameView({
                   <>
                     <div className="w-[54px] border-t-2 border-dashed border-slate-400" />
                     <DropZone
+                      pairId={p.id}
                       status={status[p.id]}
                       value={placed[p.id]}
-                      activeAnswer={draggingAnswer}
+                      isPointerOver={activeDropZoneId === p.id}
                       onDrop={(ans) => onDrop(p.id, ans)}
                     />
                   </>
@@ -1074,8 +1157,24 @@ function GameView({
       {showAnswerTiles && (
         <div className="flex flex-wrap gap-3 mt-8 justify-center">
           {shuffled.map((ans, i) => (
-            <Draggable key={ans + i} value={ans} used={!!used[ans]} onPick={setDraggingAnswer} />
+            <Draggable
+              key={ans + i}
+              value={ans}
+              used={!!used[ans]}
+              onNativeDragChange={handleNativeAnswerDragChange}
+              onPointerDragStart={startPointerAnswerDrag}
+            />
           ))}
+        </div>
+      )}
+
+      {pointerDragPreview && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 rounded-md bg-amber-300 px-5 py-3 text-lg font-semibold text-amber-950 shadow-lg ring-2 ring-amber-500/40"
+          style={{ left: pointerDragPreview.x, top: pointerDragPreview.y }}
+        >
+          {pointerDragPreview.answer}
         </div>
       )}
 
@@ -1352,11 +1451,13 @@ function TimerControls({
 function Draggable({
   value,
   used,
-  onPick,
+  onNativeDragChange,
+  onPointerDragStart,
 }: {
   value: string;
   used: boolean;
-  onPick: (value: string | null) => void;
+  onNativeDragChange: (value: string | null) => void;
+  onPointerDragStart: (value: string, event: React.PointerEvent<HTMLElement>) => void;
 }) {
   return (
     <div
@@ -1364,13 +1465,13 @@ function Draggable({
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", value);
-        onPick(value);
+        onNativeDragChange(value);
       }}
-      onDragEnd={() => onPick(null)}
-      onPointerDown={() => {
-        if (!used) onPick(value);
+      onDragEnd={() => onNativeDragChange(null)}
+      onPointerDown={(event) => {
+        if (!used) onPointerDragStart(value, event);
       }}
-      className={`px-6 py-3 rounded-md text-lg font-semibold select-none shadow-sm transition ${
+      className={`touch-none px-6 py-3 rounded-md text-lg font-semibold select-none shadow-sm transition ${
         used
           ? "bg-amber-100 text-amber-300 cursor-not-allowed line-through"
           : "bg-amber-300 text-amber-950 cursor-grab active:cursor-grabbing hover:bg-amber-400 hover:shadow"
@@ -1382,14 +1483,16 @@ function Draggable({
 }
 
 function DropZone({
+  pairId,
   status,
   value,
-  activeAnswer,
+  isPointerOver,
   onDrop,
 }: {
+  pairId: string;
   status?: "correct" | "wrong";
   value?: string;
-  activeAnswer: string | null;
+  isPointerOver: boolean;
   onDrop: (val: string) => void;
 }) {
   const [over, setOver] = useState(false);
@@ -1400,6 +1503,7 @@ function DropZone({
   return (
     <div className="relative">
       <div
+        data-drop-zone-pair-id={pairId}
         onDragOver={(e) => {
           e.preventDefault();
           setOver(true);
@@ -1410,15 +1514,12 @@ function DropZone({
           const v = e.dataTransfer.getData("text/plain");
           dropAnswer(v);
         }}
-        onPointerUp={() => {
-          if (activeAnswer) dropAnswer(activeAnswer);
-        }}
         className={`w-[260px] md:w-[292px] h-full min-h-12 border-2 border-dashed rounded-md px-4 text-lg font-semibold flex items-center justify-center transition ${
           status === "correct"
             ? "border-green-500 bg-green-50 text-green-800"
             : status === "wrong"
               ? "border-red-500 bg-red-50 text-red-700 animate-pulse"
-              : over
+              : over || isPointerOver
                 ? "border-slate-700 bg-slate-100 text-slate-800"
                 : "border-slate-400 bg-white/70 text-slate-800"
         }`}
