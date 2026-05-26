@@ -18,7 +18,9 @@ import {
   MicOff,
 } from "lucide-react";
 import confettiAnimation from "@/assets/confetti-full-screen.json";
+import correctSound from "@/assets/correct.wav";
 import defaultTreeImage from "@/assets/default-tree.png";
+import tryAgainSound from "@/assets/try-again.wav";
 import victorySound from "@/assets/victory.mp3";
 
 export const Route = createFileRoute("/")({
@@ -1198,6 +1200,7 @@ function GameView({
 
 function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const resultAudioRef = useRef<HTMLAudioElement | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [scoreResult, setScoreResult] = useState<SpeechScoreResult | null>(null);
@@ -1214,6 +1217,22 @@ function SpeakingPracticePanel({ targetSentence }: { targetSentence: string }) {
 
   useEffect(() => {
     return () => recognitionRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!scoreResult) return;
+
+    resultAudioRef.current?.pause();
+    resultAudioRef.current = new Audio(
+      scoreResult.tone === "great" || scoreResult.tone === "pass"
+        ? correctSound
+        : tryAgainSound,
+    );
+    resultAudioRef.current.play().catch(() => {});
+  }, [scoreResult]);
+
+  useEffect(() => {
+    return () => resultAudioRef.current?.pause();
   }, []);
 
   const applyScore = (spokenText: string) => {
