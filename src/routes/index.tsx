@@ -856,7 +856,8 @@ function GameView({
   labelBoxesClickable: boolean;
 }) {
   const [status, setStatus] = useState<Record<string, "correct" | "wrong" | undefined>>({});
-  const [speakPassed, setSpeakPassed] = useState<Record<string, boolean>>({});
+  const [speakSequenceIndex, setSpeakSequenceIndex] = useState(0);
+  const [speakCelebrating, setSpeakCelebrating] = useState(false);
   const [used, setUsed] = useState<Record<string, boolean>>({});
   const [placed, setPlaced] = useState<Record<string, string>>({});
   const [selectedPairId, setSelectedPairId] = useState<string | null>(() =>
@@ -871,14 +872,14 @@ function GameView({
   const timerDurationSeconds = timerSettings.minutes * 60 + timerSettings.seconds;
   const [remainingSeconds, setRemainingSeconds] = useState(timerDurationSeconds);
   const [timerRunning, setTimerRunning] = useState(false);
+  const speakCelebrationTimerRef = useRef<number | null>(null);
 
   const allCorrect = pairs.length > 0 && pairs.every((p) => status[p.id] === "correct");
-  const allSpeakPassed =
-    showTargetSentence && pairs.length > 0 && pairs.every((pair) => speakPassed[pair.id]);
 
   useEffect(() => {
     setShuffled(shuffleAnswers(pairs));
-    setSpeakPassed({});
+    setSpeakSequenceIndex(0);
+    setSpeakCelebrating(false);
     setSelectedPairId((current) => {
       const pairIds = new Set(pairs.map((pair) => pair.id));
       if (current && pairIds.has(current)) return current;
@@ -910,6 +911,14 @@ function GameView({
       setTimerRunning(false);
     }
   }, [remainingSeconds, timerRunning]);
+
+  useEffect(() => {
+    return () => {
+      if (speakCelebrationTimerRef.current) {
+        window.clearTimeout(speakCelebrationTimerRef.current);
+      }
+    };
+  }, []);
 
   const clearAnswerDrag = useCallback(() => {
     pointerDragRef.current = null;
@@ -1020,8 +1029,41 @@ function GameView({
     setSelectedPairId(pairId);
   };
 
+  const triggerSpeakCelebration = () => {
+    if (speakCelebrationTimerRef.current) {
+      window.clearTimeout(speakCelebrationTimerRef.current);
+    }
+    setSpeakCelebrating(false);
+    window.setTimeout(() => setSpeakCelebrating(true), 0);
+    speakCelebrationTimerRef.current = window.setTimeout(
+      () => {
+        setSpeakCelebrating(false);
+        speakCelebrationTimerRef.current = null;
+      },
+      (CELEBRATION_BASE_SECONDS + CELEBRATION_EXTRA_SECONDS) * 1000,
+    );
+  };
+
   const updateSpeakResult = (pairId: string, passed: boolean) => {
-    setSpeakPassed((current) => ({ ...current, [pairId]: passed }));
+    if (!passed) {
+      setSpeakSequenceIndex(0);
+      return;
+    }
+
+    const expectedPair = pairs[speakSequenceIndex];
+    if (!expectedPair || expectedPair.id !== pairId) {
+      setSpeakSequenceIndex(pairs[0]?.id === pairId ? 1 : 0);
+      return;
+    }
+
+    const nextIndex = speakSequenceIndex + 1;
+    if (nextIndex >= pairs.length) {
+      setSpeakSequenceIndex(0);
+      triggerSpeakCelebration();
+      return;
+    }
+
+    setSpeakSequenceIndex(nextIndex);
   };
 
   const updateGroupStars = (groupId: string, change: number) => {
@@ -1046,7 +1088,7 @@ function GameView({
 
   return (
     <div>
-      <CelebrationAnimation play={allCorrect || allSpeakPassed} />
+      <CelebrationAnimation play={allCorrect || speakCelebrating} />
 
       <div className="mb-3 flex items-center justify-end gap-3">
         <div className="flex w-64 justify-center rounded-lg border bg-white/80 px-3 py-2 shadow-sm">
