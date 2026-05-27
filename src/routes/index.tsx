@@ -1196,11 +1196,11 @@ function GameView({
 
       {showTargetSentence && selectedSentence && (
         <>
-          <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-8 py-6 shadow-sm">
-            <p className="text-sm font-bold uppercase tracking-wide text-slate-400">
-              TARGET SENTENCE / 目标跟读句子
+          <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-8 py-3 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+              TARGET SENTENCE / 目标句子
             </p>
-            <p className="mt-3 text-3xl font-bold leading-tight text-slate-900">
+            <p className="mt-1 text-2xl font-bold leading-tight text-slate-900">
               {selectedSentence}
             </p>
           </section>
@@ -1439,24 +1439,23 @@ function SpeakingPracticePanel({
   const sentenceWordTokens = getSentenceWordTokens(targetSentence, transcript);
 
   return (
-    <section className="mt-6">
-      <div className="rounded-2xl border-2 border-indigo-100 bg-white px-8 py-8 text-center shadow-md">
-        <p className="flex items-center justify-center gap-3 text-lg font-bold text-slate-400">
-          <MicOff size={24} />
-          {isListening ? "正在听你朗读，读完后会自动打分。" : "Press to start"}
-        </p>
+    <section className="mt-4">
+      <div className="rounded-2xl border-2 border-indigo-100 bg-white px-8 py-4 text-center shadow-md">
         <button
           type="button"
           onClick={startRealScoring}
-          className={`mx-auto mt-8 inline-flex min-h-20 items-center justify-center gap-5 rounded-2xl px-12 text-2xl font-bold text-white shadow-xl transition hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-300 ${
+          className={`mx-auto inline-flex min-h-14 items-center justify-center gap-4 rounded-2xl px-10 text-xl font-bold text-white shadow-xl transition hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-300 ${
             isListening
               ? "bg-gradient-to-r from-red-500 to-pink-500"
               : "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"
           }`}
         >
-          <Mic size={34} />
+          <Mic size={28} />
           {isListening ? "正在听...点击结束" : "I can read"}
         </button>
+        <p className="mt-3 text-sm font-bold text-slate-400">
+          {isListening ? "正在听你朗读，读完后会自动打分。" : "Press to start"}
+        </p>
         {(transcript || scoreResult || errorMessage) && (
           <div className="mx-auto mt-6 max-w-3xl space-y-3 text-left">
             {transcript && (
