@@ -109,6 +109,7 @@ type WorkspaceConfig = {
   showGameReset: boolean;
   showTargetSentence: boolean;
   showGroupStars: boolean;
+  groupStarsKey: string;
   labelBoxesClickable: boolean;
 };
 
@@ -117,7 +118,8 @@ const IMAGE_KEY = "tree-match-image-v1";
 const TITLE_KEY = "tree-match-title-v1";
 const TIMER_KEY = "tree-match-timer-v1";
 const TIMER_DEFAULT_VERSION_KEY = "tree-match-timer-default-version";
-const GROUP_STARS_KEY = "group-work-stars-v1";
+const MATCH_GROUP_STARS_KEY = "match-master-stars-v1";
+const SPEAK_GROUP_STARS_KEY = "group-work-stars-v1";
 const MATCH_TIMER_DEFAULT_VERSION = "2";
 const SPEAK_TIMER_DEFAULT_VERSION = "3";
 const DEFAULT_TITLE = "Match";
@@ -131,6 +133,8 @@ const CELEBRATION_BASE_SECONDS =
   (confettiAnimation.op - confettiAnimation.ip) / confettiAnimation.fr;
 const CELEBRATION_PLAYBACK_SPEED =
   CELEBRATION_BASE_SECONDS / (CELEBRATION_BASE_SECONDS + CELEBRATION_EXTRA_SECONDS);
+const APP_FRAME_MAX_WIDTH_CLASS = "max-w-[1124px]";
+const MATCH_BOX_WIDTH_CLASS = "w-[170px] md:w-[186px]";
 
 const DEFAULT_PAIRS: Pair[] = [
   { id: "1", label: "flowers", answer: "pink" },
@@ -192,7 +196,8 @@ const WORKSPACES: WorkspaceConfig[] = [
     showAnswerTiles: true,
     showGameReset: true,
     showTargetSentence: false,
-    showGroupStars: false,
+    showGroupStars: true,
+    groupStarsKey: MATCH_GROUP_STARS_KEY,
     labelBoxesClickable: false,
   },
   {
@@ -220,6 +225,7 @@ const WORKSPACES: WorkspaceConfig[] = [
     showGameReset: false,
     showTargetSentence: true,
     showGroupStars: true,
+    groupStarsKey: SPEAK_GROUP_STARS_KEY,
     labelBoxesClickable: true,
   },
 ];
@@ -511,7 +517,9 @@ function WorkspacePage({
   return (
     <>
       <header className="border-b bg-white/70 backdrop-blur">
-        <div className="max-w-5xl mx-auto px-6 py-2 flex items-center justify-between">
+        <div
+          className={`${APP_FRAME_MAX_WIDTH_CLASS} mx-auto flex items-center justify-between px-6 py-2`}
+        >
           <div className="flex items-center gap-2">
             <h1>
               <button
@@ -548,7 +556,7 @@ function WorkspacePage({
           </nav>
         </div>
       </header>
-      <main className="max-w-5xl mx-auto px-6 py-4">
+      <main className={`${APP_FRAME_MAX_WIDTH_CLASS} mx-auto px-6 py-4`}>
         {tab === "home" ? (
           <GameView
             key={workspace.id}
@@ -560,6 +568,7 @@ function WorkspacePage({
             showGameReset={workspace.showGameReset}
             showTargetSentence={workspace.showTargetSentence}
             showGroupStars={workspace.showGroupStars}
+            groupStarsKey={workspace.groupStarsKey}
             labelBoxesClickable={workspace.labelBoxesClickable}
           />
         ) : (
@@ -591,7 +600,7 @@ function BottomNavigation({
 }) {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl gap-2 px-6 py-3">
+      <div className={`${APP_FRAME_MAX_WIDTH_CLASS} mx-auto flex gap-2 px-6 py-3`}>
         {WORKSPACES.map((workspace) => {
           const active = workspace.id === activeWorkspaceId;
           return (
@@ -780,21 +789,29 @@ function getSpeechRecognitionConstructor() {
 function GroupStarsPanel({
   groups,
   onChange,
+  compact = false,
 }: {
   groups: GroupStarScore[];
   onChange: (groupId: string, change: number) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="grid w-52 shrink-0 grid-cols-3 overflow-hidden rounded-xl border-2 border-slate-700 bg-amber-50/40 shadow-sm">
+    <div
+      className={`grid shrink-0 grid-cols-3 overflow-hidden rounded-xl border-2 border-slate-700 bg-amber-50/40 shadow-sm ${
+        compact ? "w-40" : "w-52"
+      }`}
+    >
       {groups.map((group, index) => (
         <div
           key={group.id}
-          className={`flex min-h-full flex-col items-center justify-between px-2 py-3 text-center ${
-            index > 0 ? "border-l-2 border-slate-700" : ""
-          }`}
+          className={`flex min-h-full flex-col items-center justify-between text-center ${
+            compact ? "px-1 py-2" : "px-2 py-3"
+          } ${index > 0 ? "border-l-2 border-slate-700" : ""}`}
         >
           <div>
-            <p className="text-sm font-semibold leading-tight text-slate-800">
+            <p
+              className={`${compact ? "text-xs" : "text-sm"} font-semibold leading-tight text-slate-800`}
+            >
               Group
               <br />
               {index + 1}
@@ -817,17 +834,17 @@ function GroupStarsPanel({
               onClick={() => onChange(group.id, -1)}
               disabled={group.stars === 0}
               aria-label={`Decrease ${group.label} stars`}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 bg-white text-slate-600 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className={`${compact ? "h-6 w-6" : "h-7 w-7"} inline-flex items-center justify-center rounded-md border border-amber-200 bg-white text-slate-600 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40`}
             >
-              <Minus size={14} />
+              <Minus size={compact ? 12 : 14} />
             </button>
             <button
               type="button"
               onClick={() => onChange(group.id, 1)}
               aria-label={`Increase ${group.label} stars`}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-300 bg-amber-100 text-amber-800 transition hover:bg-amber-200"
+              className={`${compact ? "h-6 w-6" : "h-7 w-7"} inline-flex items-center justify-center rounded-md border border-amber-300 bg-amber-100 text-amber-800 transition hover:bg-amber-200`}
             >
-              <Plus size={14} />
+              <Plus size={compact ? 12 : 14} />
             </button>
           </div>
         </div>
@@ -845,6 +862,7 @@ function GameView({
   showGameReset,
   showTargetSentence,
   showGroupStars,
+  groupStarsKey,
   labelBoxesClickable,
 }: {
   pairs: Pair[];
@@ -855,6 +873,7 @@ function GameView({
   showGameReset: boolean;
   showTargetSentence: boolean;
   showGroupStars: boolean;
+  groupStarsKey: string;
   labelBoxesClickable: boolean;
 }) {
   const [status, setStatus] = useState<Record<string, "correct" | "wrong" | undefined>>({});
@@ -870,7 +889,7 @@ function GameView({
   const [activeDropZoneId, setActiveDropZoneId] = useState<string | null>(null);
   const pointerDragRef = useRef<PointerAnswerDrag | null>(null);
   const [shuffled, setShuffled] = useState(() => pairs.map((p) => p.answer));
-  const [groupStars, setGroupStars] = useGroupStars(GROUP_STARS_KEY, showGroupStars);
+  const [groupStars, setGroupStars] = useGroupStars(groupStarsKey, showGroupStars);
   const timerDurationSeconds = timerSettings.minutes * 60 + timerSettings.seconds;
   const [remainingSeconds, setRemainingSeconds] = useState(timerDurationSeconds);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -1114,7 +1133,7 @@ function GameView({
 
       <div
         className={`flex bg-white/60 rounded-2xl p-6 border ${
-          showGroupStars ? "gap-6" : "gap-8"
+          showDropTargets && showGroupStars ? "gap-4" : showGroupStars ? "gap-6" : "gap-8"
         } ${showDropTargets || showGroupStars ? "items-stretch" : "items-center"} ${
           showGroupStars ? "h-[360px]" : ""
         }`}
@@ -1122,7 +1141,9 @@ function GameView({
         <div
           className={
             showDropTargets
-              ? "flex items-stretch"
+              ? `flex h-full shrink-0 items-stretch justify-center ${
+                  showGroupStars ? "w-[280px]" : ""
+                }`
               : `flex w-56 shrink-0 justify-center ${
                   showGroupStars ? "h-full items-stretch" : "items-center"
                 }`
@@ -1159,7 +1180,7 @@ function GameView({
               : "border-slate-700 bg-white";
             const labelBoxClassName = `border-2 rounded-md px-4 font-bold text-slate-800 flex items-center transition ${labelColorClass} ${
               showDropTargets
-                ? "h-full w-[260px] md:w-[292px]"
+                ? `h-full ${MATCH_BOX_WIDTH_CLASS}`
                 : `min-h-16 w-full py-3 text-left leading-snug ${
                     showGroupStars ? "h-full text-2xl" : "max-w-[560px]"
                   }`
@@ -1190,7 +1211,9 @@ function GameView({
                 )}
                 {showDropTargets && (
                   <>
-                    <div className="w-[54px] border-t-2 border-dashed border-slate-400" />
+                    <div
+                      className={`${showGroupStars ? "w-9" : "w-[54px]"} border-t-2 border-dashed border-slate-400`}
+                    />
                     <DropZone
                       pairId={p.id}
                       status={status[p.id]}
@@ -1657,7 +1680,7 @@ function DropZone({
           const v = e.dataTransfer.getData("text/plain");
           dropAnswer(v);
         }}
-        className={`w-[260px] md:w-[292px] h-full min-h-12 border-2 border-dashed rounded-md px-4 text-lg font-semibold flex items-center justify-center transition ${
+        className={`${MATCH_BOX_WIDTH_CLASS} h-full min-h-12 border-2 border-dashed rounded-md px-4 text-lg font-semibold flex items-center justify-center transition ${
           status === "correct"
             ? "border-green-500 bg-green-50 text-green-800"
             : status === "wrong"
